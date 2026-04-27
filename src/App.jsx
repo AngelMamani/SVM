@@ -3,6 +3,7 @@ import { Circle, MapContainer, Marker, Popup, TileLayer, useMapEvents } from 're
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import './App.css'
+import appLogo from './assets/logo.png'
 
 const cityCenter = [-12.5932, -69.1891]
 const STORAGE_KEY = 'pmaldonado-custom-map-points'
@@ -110,6 +111,19 @@ function App() {
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(points))
   }, [points])
+
+  useEffect(() => {
+    document.title = 'SVM | Sistema de Vigilancia Metrical'
+
+    let favicon = document.querySelector("link[rel='icon']")
+    if (!favicon) {
+      favicon = document.createElement('link')
+      favicon.setAttribute('rel', 'icon')
+      document.head.appendChild(favicon)
+    }
+    favicon.setAttribute('type', 'image/png')
+    favicon.setAttribute('href', appLogo)
+  }, [])
 
   const savePoint = () => {
     if (!selectedLocation || !pointName.trim()) {
