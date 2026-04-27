@@ -1,0 +1,14 @@
+{
+  "points": [
+    {
+      "id": "8ZBKSpf42Bk",
+      "name": "S",
+      "type": "Capa 1",
+      "position": [
+        -12.586542,
+        -69.169249
+      ]
+    }
+  ],
+  "$schema": "./node_modules/json-server/schema.json"
+}

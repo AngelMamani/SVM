@@ -6,7 +6,8 @@ import './App.css'
 import appLogo from './assets/logo.png'
 
 const cityCenter = [-12.5932, -69.1891]
-const STORAGE_KEY = 'pmaldonado-custom-map-points'
+const POINTS_API_URL = 'http://localhost:3001/points'
+const MAP_VIEW_KEY = 'pmaldonado-map-last-view'
 const POINT_TYPE_COLORS = {
   'Capa 1': '#dc2626',
   'Capa 2': '#2563eb',
@@ -73,6 +74,20 @@ function AddPointOnMap({ onSelectLocation }) {
   return null
 }
 
+function MapViewTracker({ onViewChange }) {
+  useMapEvents({
+    moveend(event) {
+      const map = event.target
+      const center = map.getCenter()
+      onViewChange({
+        center: [Number(center.lat.toFixed(6)), Number(center.lng.toFixed(6))],
+        zoom: map.getZoom()
+      })
+    }
+  })
+  return null
+}
+
 function normalizePointType(type) {
   const validTypes = Object.keys(POINT_TYPE_COLORS)
   if (validTypes.includes(type)) {
@@ -91,26 +106,55 @@ function normalizePointType(type) {
 }
 
 function App() {
-  const [points, setPoints] = useState(() => {
-    const stored = localStorage.getItem(STORAGE_KEY)
-    if (!stored) {
-      return []
+  const [mapView, setMapView] = useState(() => {
+    const savedView = localStorage.getItem(MAP_VIEW_KEY)
+    if (!savedView) {
+      return { center: cityCenter, zoom: 13 }
     }
-    return JSON.parse(stored).map((point) => ({
-      ...point,
-      type: normalizePointType(point.type)
-    }))
+    try {
+      const parsed = JSON.parse(savedView)
+      if (Array.isArray(parsed.center) && typeof parsed.zoom === 'number') {
+        return parsed
+      }
+    } catch {
+      // Ignore malformed saved map view.
+    }
+    return { center: cityCenter, zoom: 13 }
   })
+  const [points, setPoints] = useState([])
   const [selectedLocation, setSelectedLocation] = useState(null)
   const [pointName, setPointName] = useState('')
   const [pointType, setPointType] = useState('Capa 1')
+  const [isSaving, setIsSaving] = useState(false)
+  const [isLoading, setIsLoading] = useState(true)
+  const [errorMessage, setErrorMessage] = useState('')
   const [visibleRings, setVisibleRings] = useState(() =>
     surveillanceRings.map((ring) => ring.id)
   )
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(points))
-  }, [points])
+    const loadPoints = async () => {
+      try {
+        const response = await fetch(POINTS_API_URL)
+        if (!response.ok) {
+          throw new Error('No se pudo cargar la base de datos JSON.')
+        }
+        const data = await response.json()
+        setPoints(
+          data.map((point) => ({
+            ...point,
+            type: normalizePointType(point.type)
+          }))
+        )
+      } catch (error) {
+        setErrorMessage(`${error.message} Verifica que json-server este ejecutandose en puerto 3001.`)
+      } finally {
+        setIsLoading(false)
+      }
+    }
+
+    loadPoints()
+  }, [])
 
   useEffect(() => {
     document.title = 'SVM | Sistema de Vigilancia Metrical'
@@ -125,30 +169,70 @@ function App() {
     favicon.setAttribute('href', appLogo)
   }, [])
 
-  const savePoint = () => {
+  const savePoint = async () => {
     if (!selectedLocation || !pointName.trim()) {
       return
     }
 
-    const newPoint = {
-      id: crypto.randomUUID(),
-      name: pointName.trim(),
-      type: pointType,
-      position: selectedLocation
+    setIsSaving(true)
+    setErrorMessage('')
+    try {
+      const newPoint = {
+        id: crypto.randomUUID(),
+        name: pointName.trim(),
+        type: pointType,
+        position: selectedLocation
+      }
+
+      const response = await fetch(POINTS_API_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newPoint)
+      })
+      if (!response.ok) {
+        throw new Error('No se pudo guardar el punto.')
+      }
+      const savedPoint = await response.json()
+      setPoints((current) => [...current, savedPoint])
+      setPointName('')
+      setSelectedLocation(null)
+    } catch (error) {
+      setErrorMessage(error.message)
+    } finally {
+      setIsSaving(false)
     }
-
-    setPoints((current) => [...current, newPoint])
-    setPointName('')
-    setSelectedLocation(null)
   }
 
-  const deletePoint = (pointId) => {
-    setPoints((current) => current.filter((point) => point.id !== pointId))
+  const deletePoint = async (pointId) => {
+    setErrorMessage('')
+    try {
+      const response = await fetch(`${POINTS_API_URL}/${pointId}`, {
+        method: 'DELETE'
+      })
+      if (!response.ok) {
+        throw new Error('No se pudo eliminar el punto.')
+      }
+      setPoints((current) => current.filter((point) => point.id !== pointId))
+    } catch (error) {
+      setErrorMessage(error.message)
+    }
   }
 
-  const clearAllPoints = () => {
-    setPoints([])
-    setSelectedLocation(null)
+  const clearAllPoints = async () => {
+    setErrorMessage('')
+    try {
+      await Promise.all(
+        points.map((point) =>
+          fetch(`${POINTS_API_URL}/${point.id}`, {
+            method: 'DELETE'
+          })
+        )
+      )
+      setPoints([])
+      setSelectedLocation(null)
+    } catch (error) {
+      setErrorMessage('No se pudieron limpiar todos los puntos.')
+    }
   }
 
   const toggleRingVisibility = (ringId) => {
@@ -157,6 +241,11 @@ function App() {
         ? current.filter((id) => id !== ringId)
         : [...current, ringId]
     )
+  }
+
+  const handleMapViewChange = (nextView) => {
+    setMapView(nextView)
+    localStorage.setItem(MAP_VIEW_KEY, JSON.stringify(nextView))
   }
 
   return (
@@ -199,6 +288,8 @@ function App() {
             <p className="helper-text">
               Haz clic en el mapa para seleccionar coordenadas.
             </p>
+            {isLoading && <p className="status-text">Cargando puntos desde base JSON...</p>}
+            {errorMessage && <p className="status-text error">{errorMessage}</p>}
             <label htmlFor="point-name">Nombre</label>
             <input
               id="point-name"
@@ -227,10 +318,10 @@ function App() {
             </p>
 
             <div className="button-row">
-              <button type="button" onClick={savePoint}>
-                Guardar punto
+              <button type="button" onClick={savePoint} disabled={isSaving || isLoading}>
+                {isSaving ? 'Guardando...' : 'Guardar punto'}
               </button>
-              <button type="button" className="secondary" onClick={clearAllPoints}>
+              <button type="button" className="secondary" onClick={clearAllPoints} disabled={isLoading}>
                 Limpiar todo
               </button>
             </div>
@@ -264,11 +355,12 @@ function App() {
         </aside>
 
         <article className="map-card">
-          <MapContainer center={cityCenter} zoom={13} scrollWheelZoom className="map">
+          <MapContainer center={mapView.center} zoom={mapView.zoom} scrollWheelZoom className="map">
             <TileLayer
               attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
               url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
             />
+            <MapViewTracker onViewChange={handleMapViewChange} />
             {surveillanceRings
               .filter((ring) => visibleRings.includes(ring.id))
               .map((ring) => (
